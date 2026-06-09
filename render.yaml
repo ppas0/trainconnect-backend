@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: trainconnect
+    runtime: node
+    region: frankfurt          # EU-Server (niedrigste Latenz für Europa)
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+
+      # JWT – wird von Render automatisch generiert (sicher, einmalig)
+      - key: JWT_SECRET
+        generateValue: true
+
+      # CORS – nur trainconnect.eu erlaubt
+      - key: ALLOWED_ORIGINS
+        value: https://trainconnect.eu,https://www.trainconnect.eu,https://trainconnect.onrender.com
+
+      # Stripe – im Render-Dashboard unter Environment eintragen:
+      # STRIPE_SECRET_KEY     = sk_live_XXXX
+      # STRIPE_PUBLISHABLE_KEY = pk_live_XXXX
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+
+      # PostgreSQL (Neon oder anderer Anbieter)
+      # DATABASE_URL = postgresql://user:pw@host:5432/dbname?sslmode=require
+      # Ohne diese Variable läuft TrainConnect mit JSON-Fallback (Daten gehen bei
+      # jedem Deploy verloren – daher unbedingt Neon einrichten!)
+      - key: DATABASE_URL
+        sync: false
+
+      # SendGrid E-Mail
+      # SENDGRID_API_KEY = SG.XXXX
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        value: noreply@trainconnect.eu
+      - key: SENDGRID_FROM_NAME
+        value: TrainConnect Europe

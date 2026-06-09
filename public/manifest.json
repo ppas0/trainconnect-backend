@@ -1,0 +1,13 @@
+{
+  "name": "TrainConnect Europe",
+  "short_name": "TrainConnect",
+  "description": "Alle europäischen Zugverbindungen auf einer Plattform. Suche, vergleiche und buche.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0f1f3d",
+  "theme_color": "#0f1f3d",
+  "orientation": "portrait-primary",
+  "lang": "de",
+  "categories": ["travel", "navigation"]
+}
