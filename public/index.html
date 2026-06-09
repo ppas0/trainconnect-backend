@@ -698,25 +698,20 @@ const S = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  API
+//  API – echte HTTP-Calls zum Express-Backend
 // ═══════════════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════════════
-//  CLIENT-SIDE BACKEND  (statisches Hosting – läuft komplett im Browser)
-//  Ersetzt den Node/Express-Server 1:1. Daten persistent in localStorage.
-//  Kein Server = keine Abstürze, keine zurückgesetzte DB, keine Betriebsprobleme.
-// ═══════════════════════════════════════════════════════════════════════════
-const TCDB = {
-  _key: 'tc_db_v2',
-  load() { try { return JSON.parse(localStorage.getItem(this._key)) || this._seed(); } catch { return this._seed(); } },
-  save(db) { localStorage.setItem(this._key, JSON.stringify(db)); },
-  _seed() {
-    const db = { users: [], tickets: [], pricealerts: [] };
-    db.users.push({ id: crypto.randomUUID(), email: 'admin@trainconnect.eu', password: 'admin123',
-      name: 'Admin', role: 'admin', createdAt: new Date().toISOString(), loyaltyPoints: 0 });
-    localStorage.setItem(this._key, JSON.stringify(db));
-    return db;
-  }
-};
+async function _apiFetch(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (S.token) headers['Authorization'] = 'Bearer ' + S.token;
+  const resp = await fetch('/api' + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || 'Serverfehler (' + resp.status + ')');
+  return data;
+}
 
 const STATIONS = [
   { id:'BER', name:'Berlin Hbf', city:'Berlin', country:'DE', lat:52.5251, lon:13.3694 },
@@ -886,48 +881,52 @@ function _priceCalendar({fromId,toId,month,year,passengers,seatClass}){
   for(let d=1;d<=days;d++){ const v=PRICE_CALENDAR_VARIATION[(d-1)%PRICE_CALENDAR_VARIATION.length]; cal.push({day:d,price:Math.round(base*v*(0.85+rnd()*0.3))}); }
   return cal;
 }
-function _token(uid){ return 'tck.'+btoa(uid); }
-function _uidFromToken(t){ try{ return atob(String(t||'').replace('tck.','')); }catch{ return null; } }
-function _me(){ const uid=_uidFromToken(S.token); if(!uid) return null; return TCDB.load().users.find(u=>u.id===uid)||null; }
-function _pubUser(u){ return { id:u.id, email:u.email, name:u.name, role:u.role, loyaltyPoints:u.loyaltyPoints, createdAt:u.createdAt }; }
-
-// Router – ersetzt fetch('/api'+path). Wirft Error(msg) bei Fehler, gibt sonst Daten.
+// ═══════════════════════════════════════════════════════════════════════════
+//  API-Router: Auth/Tickets/Alerts → echtes Backend; Suche/Stationen → lokal
+// ═══════════════════════════════════════════════════════════════════════════
 async function api(method, path, body) {
-  await new Promise(r=>setTimeout(r, 120)); // realistische Latenz
   const [rawPath, qs] = path.split('?');
   const q = Object.fromEntries(new URLSearchParams(qs||''));
   const seg = rawPath.split('/').filter(Boolean);
-  const db = TCDB.load();
-  const me = _me();
-  const need = () => { if(!me) throw new Error('Nicht angemeldet'); };
-  const adminReq = () => { need(); if(me.role!=='admin') throw new Error('Kein Zugriff'); };
   const key = method+' /'+seg.join('/');
 
+  // ── ECHTE BACKEND-CALLS ────────────────────────────────────────────────
   // AUTH
-  if (key==='POST /auth/register') {
-    const { email, password, name } = body||{};
-    if(!email||!password||!name) throw new Error('Alle Felder sind pflicht');
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Ungültige E-Mail');
-    if(password.length<6) throw new Error('Passwort min. 6 Zeichen');
-    if(db.users.find(u=>u.email===email.toLowerCase())) throw new Error('E-Mail bereits registriert');
-    const user={ id:crypto.randomUUID(), email:email.toLowerCase(), password, name, role:'user', createdAt:new Date().toISOString(), loyaltyPoints:0 };
-    db.users.push(user); TCDB.save(db);
-    return { token:_token(user.id), user:_pubUser(user) };
-  }
-  if (key==='POST /auth/login') {
-    const { email, password } = body||{};
-    const user=db.users.find(u=>u.email===String(email||'').toLowerCase());
-    if(!user||user.password!==password) throw new Error('E-Mail oder Passwort falsch');
-    return { token:_token(user.id), user:_pubUser(user) };
-  }
-  if (key==='GET /auth/me') { need(); return _pubUser(me); }
-  if (key==='PUT /auth/profile') {
-    need(); const { name, currentPassword, newPassword } = body||{};
-    if(name) me.name=name;
-    if(newPassword){ if(me.password!==currentPassword) throw new Error('Aktuelles Passwort falsch'); if(newPassword.length<6) throw new Error('Neues Passwort min. 6 Zeichen'); me.password=newPassword; }
-    TCDB.save(db); return _pubUser(me);
+  if (key==='POST /auth/register') return _apiFetch('POST','/auth/register',body);
+  if (key==='POST /auth/login')    return _apiFetch('POST','/auth/login',body);
+  if (key==='GET /auth/me')       return _apiFetch('GET','/auth/me');
+  if (key==='PUT /auth/profile')  return _apiFetch('PUT','/auth/profile',body);
+
+  // TICKETS & CHECKOUT → echtes Backend
+  if (key==='POST /checkout')     return _apiFetch('POST','/checkout',body);
+  if (key==='GET /tickets')       return _apiFetch('GET','/tickets');
+  if (method==='GET'  && seg[0]==='tickets' && seg.length===2) return _apiFetch('GET',`/tickets/${seg[1]}`);
+  if (method==='POST' && seg[0]==='tickets' && seg[2]==='cancel') return _apiFetch('POST',`/tickets/${seg[1]}/cancel`,body);
+
+  // PRICE ALERTS → echtes Backend
+  if (key==='GET /alerts')    return _apiFetch('GET','/alerts');
+  if (key==='POST /alerts')   return _apiFetch('POST','/alerts',body);
+  if (method==='DELETE' && seg[0]==='alerts') return _apiFetch('DELETE',`/alerts/${seg[1]}`);
+
+  // ADMIN → echtes Backend
+  if (key==='GET /admin/stats')  return _apiFetch('GET','/admin/stats');
+  if (key==='GET /admin/users')  return _apiFetch('GET','/admin/users');
+
+  // TRACKING → lokal simuliert
+  if (method==='GET' && seg[0]==='tracking' && seg.length===2) {
+    if(!S.token) throw new Error('Nicht angemeldet');
+    const ticket = await _apiFetch('GET',`/tickets/${seg[1]}`).catch(()=>null);
+    if(!ticket) throw new Error('Ticket nicht gefunden');
+    const now=new Date(), dep=new Date(ticket.departureTime), arr=new Date(ticket.arrivalTime);
+    const liveDelay=Math.random()<0.3?Math.floor(Math.random()*25):0;
+    const events=[{ status:'Ticket ausgestellt', station:ticket.fromStation, delay:0, time:ticket.createdAt }];
+    if(now>dep) events.push({ status:'Zug abgefahren', station:ticket.fromStation, delay:liveDelay, time:dep.toISOString() });
+    if(now>arr) events.push({ status:'Angekommen', station:ticket.toStation, delay:Math.max(0,liveDelay-3), time:arr.toISOString() });
+    const euCompensation=liveDelay>=60?{ eligible:true, percentage:liveDelay>=120?50:25, amount:liveDelay>=120?Math.round(ticket.price*0.5):Math.round(ticket.price*0.25), url:OPERATOR_RIGHTS[ticket.operator]||'https://ec.europa.eu/transport/themes/passengers/rail_en' }:null;
+    return { ticket, events, currentDelay:liveDelay, euCompensation };
   }
 
+  // ── LOKALE SIMULATION (kein Backend nötig) ─────────────────────────────
   // STATIONS
   if (key==='GET /stations/search') {
     const l=String(q.q||'').toLowerCase(); if(!l) return [];
@@ -937,7 +936,7 @@ async function api(method, path, body) {
 
   // SEARCH
   if (key==='GET /search') {
-    need();
+    if(!S.token) throw new Error('Nicht angemeldet');
     if(!q.from||!q.to||!q.date) throw new Error('from, to und date sind pflicht');
     if(q.from===q.to) throw new Error('Start und Ziel dürfen nicht gleich sein');
     const pax=Math.min(Math.max(parseInt(q.passengers)||1,1),9);
@@ -945,102 +944,17 @@ async function api(method, path, body) {
     return { results, count:results.length };
   }
   if (key==='GET /price-calendar') {
-    need();
+    if(!S.token) throw new Error('Nicht angemeldet');
     if(!q.from||!q.to) throw new Error('from und to erforderlich');
     const now=new Date();
     return _priceCalendar({ fromId:q.from, toId:q.to, month:parseInt(q.month||now.getMonth()+1), year:parseInt(q.year||now.getFullYear()), passengers:parseInt(q.passengers)||1, seatClass:q.class||'2' });
   }
 
-  // STATIC LISTS
-  if (key==='GET /popular-routes') return POPULAR_ROUTES;
+  // STATIC
+  if (key==='GET /popular-routes')  return POPULAR_ROUTES;
   if (key==='GET /payment-methods') return Object.entries(PAYMENT_METHODS).map(([id,m])=>({id,...m}));
-  if (key==='GET /operators') return OPERATORS_INFO;
-
-  // CHECKOUT
-  if (key==='POST /checkout') {
-    need();
-    const { connection:c, paymentMethod, seatPreference } = body||{};
-    if(!c||!paymentMethod) throw new Error('Verbindung und Zahlungsmethode erforderlich');
-    if(!PAYMENT_METHODS[paymentMethod]) throw new Error('Ungültige Zahlungsmethode');
-    if(Math.random()<0.03) throw new Error('Zahlung abgelehnt – bitte andere Methode versuchen');
-    const provider=PAYMENT_METHODS[paymentMethod].provider;
-    const paymentId=`${provider.toUpperCase()}-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
-    const seatNum=seatPreference||`${Math.floor(Math.random()*8)+1}${String.fromCharCode(65+Math.floor(Math.random()*6))}`;
-    const ticket={ id:crypto.randomUUID(), ticketCode:'TC-'+Math.random().toString(36).toUpperCase().slice(2,9),
-      userId:me.id, fromStation:c.fromStation, fromId:c.fromId, toStation:c.toStation, toId:c.toId,
-      departureTime:c.departureTime, arrivalTime:c.arrivalTime, trainNumber:c.trainNumber, operator:c.operator,
-      seatClass:c.seatClass||'2', passengers:c.passengers||1, price:c.price, currency:'EUR', status:'confirmed',
-      paymentMethod, paymentId, changes:c.changes||0, duration:c.duration||'',
-      amenities:Object.keys(c.amenities||{}).filter(k=>c.amenities[k]),
-      trackingEvents:[{ status:'Ticket ausgestellt', station:c.fromStation, delay:0, ts:new Date().toISOString() }],
-      createdAt:new Date().toISOString(), cancelledAt:null, refundAmount:null, seatNumber:seatNum };
-    db.tickets.push(ticket);
-    const u=db.users.find(x=>x.id===me.id); if(u) u.loyaltyPoints=Math.max(0,(u.loyaltyPoints||0)+Math.floor(c.price));
-    TCDB.save(db);
-    return { success:true, ticket, paymentId, message:'Zahlung erfolgreich! Dein Ticket ist bereit.' };
-  }
-
-  // TICKETS
-  if (key==='GET /tickets') { need(); return db.tickets.filter(t=>t.userId===me.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)); }
-  if (method==='GET' && seg[0]==='tickets' && seg.length===2) {
-    need(); const t=db.tickets.find(x=>x.id===seg[1]); if(!t) throw new Error('Ticket nicht gefunden');
-    if(t.userId!==me.id && me.role!=='admin') throw new Error('Kein Zugriff'); return t;
-  }
-  if (method==='POST' && seg[0]==='tickets' && seg[2]==='cancel') {
-    need(); const t=db.tickets.find(x=>x.id===seg[1]); if(!t) throw new Error('Ticket nicht gefunden');
-    if(t.userId!==me.id) throw new Error('Kein Zugriff');
-    if(t.status==='cancelled') throw new Error('Ticket bereits storniert');
-    const hrs=(new Date(t.departureTime)-new Date())/3600000;
-    const refund=hrs>24?t.price:hrs>2?Math.round(t.price*0.5):0;
-    t.status='cancelled'; t.cancelledAt=new Date().toISOString(); t.refundAmount=refund;
-    const u=db.users.find(x=>x.id===me.id); if(u) u.loyaltyPoints=Math.max(0,(u.loyaltyPoints||0)-Math.floor(t.price));
-    TCDB.save(db);
-    return { success:true, ticket:t, refundAmount:refund, message: refund>0?`Erstattung von €${refund} eingeleitet.`:'Storniert ohne Rückerstattung (< 2h vor Abfahrt).' };
-  }
-
-  // TRACKING
-  if (method==='GET' && seg[0]==='tracking' && seg.length===2) {
-    need(); const t=db.tickets.find(x=>x.id===seg[1]); if(!t) throw new Error('Ticket nicht gefunden');
-    if(t.userId!==me.id && me.role!=='admin') throw new Error('Kein Zugriff');
-    const now=new Date(), dep=new Date(t.departureTime), arr=new Date(t.arrivalTime);
-    const liveDelay=Math.random()<0.3?Math.floor(Math.random()*25):0;
-    const events=[{ status:'Ticket ausgestellt', station:t.fromStation, delay:0, time:t.createdAt }];
-    if(now>dep) events.push({ status:'Zug abgefahren', station:t.fromStation, delay:liveDelay, time:dep.toISOString() });
-    if(now>arr) events.push({ status:'Angekommen', station:t.toStation, delay:Math.max(0,liveDelay-3), time:arr.toISOString() });
-    const euCompensation=liveDelay>=60?{ eligible:true, percentage:liveDelay>=120?50:25, amount:liveDelay>=120?Math.round(t.price*0.5):Math.round(t.price*0.25), url:OPERATOR_RIGHTS[t.operator]||'https://ec.europa.eu/transport/themes/passengers/rail_en' }:null;
-    return { ticket:t, events, currentDelay:liveDelay, euCompensation };
-  }
-
-  // PRICE ALERTS
-  if (key==='GET /alerts') { need(); return (db.pricealerts||[]).filter(a=>a.userId===me.id); }
-  if (key==='POST /alerts') {
-    need(); const { fromId, toId, fromName, toName, targetPrice } = body||{};
-    if(!fromId||!toId||!targetPrice) throw new Error('fromId, toId und targetPrice erforderlich');
-    const alert={ id:crypto.randomUUID(), userId:me.id, fromId, toId, fromName, toName, targetPrice, active:true, createdAt:new Date().toISOString(), triggeredAt:null };
-    db.pricealerts=db.pricealerts||[]; db.pricealerts.push(alert); TCDB.save(db); return alert;
-  }
-  if (method==='DELETE' && seg[0]==='alerts' && seg.length===2) {
-    need(); db.pricealerts=(db.pricealerts||[]).filter(a=>a.id!==seg[1]); TCDB.save(db); return { success:true };
-  }
-
-  // ADMIN
-  if (key==='GET /admin/stats') {
-    adminReq();
-    const all=db.tickets, allU=db.users;
-    const revenue=all.filter(t=>t.status!=='cancelled').reduce((s,t)=>s+(t.price||0),0);
-    const cancelled=all.filter(t=>t.status==='cancelled').length;
-    const byOperator=all.reduce((a,t)=>{a[t.operator]=(a[t.operator]||0)+1;return a;},{});
-    const byPayment=all.reduce((a,t)=>{a[t.paymentMethod]=(a[t.paymentMethod]||0)+1;return a;},{});
-    const byDay=all.reduce((a,t)=>{const d=t.createdAt.slice(0,10);a[d]=(a[d]||0)+t.price;return a;},{});
-    const byClass=all.reduce((a,t)=>{a[t.seatClass]=(a[t.seatClass]||0)+1;return a;},{});
-    const recentTickets=[...all].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,10);
-    return { users:allU.length, tickets:all.length, revenue:revenue.toFixed(2), cancelled, activeUsers:allU.filter(u=>u.role!=='admin').length, recentTickets, byOperator, byPayment, byDay, byClass };
-  }
-  if (key==='GET /admin/users') {
-    adminReq();
-    return db.users.map(u=>({ id:u.id, email:u.email, name:u.name, role:u.role, createdAt:u.createdAt, loyaltyPoints:u.loyaltyPoints, ticketCount:db.tickets.filter(t=>t.userId===u.id).length }));
-  }
-  if (key==='GET /health') return { status:'ok', version:'2.0-static', time:new Date().toISOString() };
+  if (key==='GET /operators')       return OPERATORS_INFO;
+  if (key==='GET /health')          return { status:'ok', version:'2.0', time:new Date().toISOString() };
 
   throw new Error('Unbekannter Endpunkt: '+key);
 }
