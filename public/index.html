@@ -336,6 +336,7 @@ tr:hover td{background:var(--cream)}
   .pay-grid{grid-template-columns:1fr 1fr}
 }
 </style>
+<script src="https://js.stripe.com/v3/"></script>
 </head>
 <body>
 
@@ -378,6 +379,11 @@ tr:hover td{background:var(--cream)}
       <div class="pay-section">
         <h3>Zahlungsmethode</h3>
         <div class="pay-grid" id="payGrid"></div>
+        <div id="cardBox" style="display:none;margin-bottom:1.1rem;">
+          <div style="font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--gray);margin-bottom:.45rem;font-weight:600">Kartendaten (sicher via Stripe)</div>
+          <div id="cardElement" style="border:1.5px solid var(--gray-l);border-radius:8px;padding:.75rem .8rem;background:#fff;"></div>
+          <div id="cardError" style="color:var(--red);font-size:.8rem;margin-top:.4rem;min-height:1em;"></div>
+        </div>
       </div>
 
       <button class="confirm-btn" id="confirmBtn" onclick="confirmBook()">
@@ -691,6 +697,7 @@ tr:hover td{background:var(--cream)}
 //  STATE
 // ═══════════════════════════════════════════════════════════════════════════
 const S = {
+  stripe:null, stripePk:null, stripeLive:false, cardEl:null, cardMounted:false,
   token: localStorage.getItem('tc_token'),
   user:  JSON.parse(localStorage.getItem('tc_user')||'null'),
   results: [], selectedConn: null, selectedPay: 'card', selectedSeat: null,
@@ -1040,6 +1047,7 @@ function setUser(d) {
   localStorage.setItem('tc_token',d.token);
   localStorage.setItem('tc_user',JSON.stringify(d.user));
   updateNav();
+initStripe();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1240,23 +1248,62 @@ function openCheckout(i) {
     </button>`).join('');
 
   document.getElementById('checkoutOverlay').classList.remove('hid');
+  updateCardBox();
 }
 function closeModal() { document.getElementById('checkoutOverlay').classList.add('hid'); }
 function pickPay(btn) {
   document.querySelectorAll('.pay-opt').forEach(b=>b.classList.remove('sel'));
   btn.classList.add('sel'); S.selectedPay = btn.dataset.mid;
+  updateCardBox();
 }
 function pickSeat(btn, sn) {
   document.querySelectorAll('.seat.sel').forEach(b=>b.classList.remove('sel'));
   btn.classList.add('sel'); S.selectedSeat = sn;
 }
+
+// ── STRIPE.JS (echte Kartenzahlung) ─────────────────────────────────────────
+const STRIPE_CARD_METHODS = ['card','stripe','apple_pay','google_pay'];
+async function initStripe(){
+  try{
+    const cfg = await api('GET','/payments/config');
+    if(cfg.publishableKey && window.Stripe){
+      S.stripePk=cfg.publishableKey; S.stripeLive=!!cfg.live;
+      S.stripe=Stripe(cfg.publishableKey);
+    }
+  }catch(e){ /* Stripe nicht konfiguriert → Fallback bleibt aktiv */ }
+}
+function updateCardBox(){
+  const box=document.getElementById('cardBox'); if(!box) return;
+  const zeigen = !!S.stripe && STRIPE_CARD_METHODS.includes(S.selectedPay);
+  box.style.display = zeigen ? 'block' : 'none';
+  if(zeigen && !S.cardMounted){
+    const elements=S.stripe.elements();
+    S.cardEl=elements.create('card',{hidePostalCode:true});
+    S.cardEl.mount('#cardElement');
+    S.cardEl.on('change',ev=>{ document.getElementById('cardError').textContent = ev.error ? ev.error.message : ''; });
+    S.cardMounted=true;
+  }
+}
+
 async function confirmBook() {
   if (!S.selectedConn) return;
   const btn = document.getElementById('confirmBtn');
   btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Zahlung wird verarbeitet…';
   try {
+    let paymentIntentId = null;
+    if (S.stripe && STRIPE_CARD_METHODS.includes(S.selectedPay)) {
+      // 1) PaymentIntent vom Server
+      const intent = await api('POST','/payments/intent',{ amount:S.selectedConn.price, currency:'EUR', method:S.selectedPay });
+      if (!intent.simulated) {
+        // 2) Karte sicher über Stripe bestätigen (Daten gehen NUR an Stripe, nie an unseren Server)
+        const ergebnis = await S.stripe.confirmCardPayment(intent.clientSecret, { payment_method:{ card:S.cardEl } });
+        if (ergebnis.error) throw new Error(ergebnis.error.message);
+        if (ergebnis.paymentIntent.status!=='succeeded') throw new Error('Zahlung nicht abgeschlossen ('+ergebnis.paymentIntent.status+')');
+        paymentIntentId = ergebnis.paymentIntent.id;
+      }
+    }
     const r = await api('POST','/checkout',{
-      connection: S.selectedConn, paymentMethod: S.selectedPay, seatPreference: S.selectedSeat
+      connection: S.selectedConn, paymentMethod: S.selectedPay, seatPreference: S.selectedSeat, paymentIntentId
     });
     closeModal();
     toast('✅ '+r.message,'success',5000);

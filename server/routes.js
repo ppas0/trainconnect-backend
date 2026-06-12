@@ -132,6 +132,12 @@ router.get('/payment-methods', (req, res) => {
   res.json(Object.entries(PAYMENT_METHODS).map(([id, m]) => ({ id, ...m })));
 });
 
+// ── PAYMENT CONFIG (öffentlicher Stripe-Schlüssel fürs Frontend) ──────────────
+router.get('/payments/config', (req, res) => {
+  const pk = process.env.STRIPE_PUBLISHABLE_KEY || null;
+  res.json({ publishableKey: pk, configured: !!process.env.STRIPE_SECRET_KEY, live: !!(pk && pk.startsWith('pk_live_')) });
+});
+
 // ── PAYMENT INTENT (Stripe frontend-flow) ─────────────────────────────────────
 router.post('/payments/intent', authenticate, async (req, res) => {
   try {

@@ -12,11 +12,12 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet({ contentSecurityPolicy: {
   directives: {
     defaultSrc: ["'self'"],
-    scriptSrc:  ["'self'","'unsafe-inline'"],
+    scriptSrc:  ["'self'","'unsafe-inline'","https://js.stripe.com"],
     styleSrc:   ["'self'","'unsafe-inline'","https://fonts.googleapis.com"],
     fontSrc:    ["'self'","https://fonts.gstatic.com"],
     imgSrc:     ["'self'","data:","https:"],
-    connectSrc: ["'self'"],
+    connectSrc: ["'self'","https://api.stripe.com"],
+    frameSrc:   ["https://js.stripe.com","https://hooks.stripe.com"],
   }
 }}));
 app.use(compression());
