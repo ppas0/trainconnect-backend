@@ -906,6 +906,8 @@ async function api(method, path, body) {
 
   // TICKETS & CHECKOUT → echtes Backend
   if (key==='POST /checkout')     return _apiFetch('POST','/checkout',body);
+  if (key==='POST /payments/intent') return _apiFetch('POST','/payments/intent',body);
+  if (key==='GET /payments/config')  return _apiFetch('GET','/payments/config');
   if (key==='GET /tickets')       return _apiFetch('GET','/tickets');
   if (method==='GET'  && seg[0]==='tickets' && seg.length===2) return _apiFetch('GET',`/tickets/${seg[1]}`);
   if (method==='POST' && seg[0]==='tickets' && seg[2]==='cancel') return _apiFetch('POST',`/tickets/${seg[1]}/cancel`,body);
