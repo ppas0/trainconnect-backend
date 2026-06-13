@@ -1300,7 +1300,22 @@ async function confirmBook() {
       throw new Error('Mollie Checkout-URL fehlt');
     }
 
-    // Fallback: Alle anderen Methoden (PayPal, TWINT, Sofort etc.) → direkte Buchung
+    // PayPal: Weiterleitung zu echtem PayPal-Checkout (ppas@posteo.de)
+    if (payMethod === 'paypal') {
+      const amount = S.selectedConn.price.toFixed(2);
+      const desc = encodeURIComponent('TrainConnect: '+S.selectedConn.fromStation+' → '+S.selectedConn.toStation);
+      const returnUrl = encodeURIComponent(window.location.origin + window.location.pathname + '?paypal_return=1');
+      const cancelUrl = encodeURIComponent(window.location.href);
+      // Buchungsdaten für nach der Rückkehr speichern
+      localStorage.setItem('tc_pending_booking', JSON.stringify({
+        connection: S.selectedConn, paymentMethod: 'paypal', seatPreference: S.selectedSeat
+      }));
+      const paypalUrl = `https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=ppas%40posteo.de&amount=${amount}&currency_code=EUR&item_name=${desc}&return=${returnUrl}&cancel_return=${cancelUrl}&no_shipping=1`;
+      window.location.href = paypalUrl;
+      return;
+    }
+
+    // Alle anderen Methoden → direkte Buchung (Demo)
     const r = await api('POST','/checkout',{
       connection: S.selectedConn, paymentMethod: payMethod, seatPreference: S.selectedSeat
     });
@@ -1311,6 +1326,23 @@ async function confirmBook() {
   } catch(e) { toast('Buchungsfehler: '+e.message,'error'); }
   finally { btn.disabled=false; btn.textContent='Jetzt kostenpflichtig buchen'; }
 }
+
+// Nach PayPal-Rückkehr: Ticket ausstellen
+(async function checkPayPalReturn(){
+  if (!window.location.search.includes('paypal_return=1')) return;
+  const pending = JSON.parse(localStorage.getItem('tc_pending_booking')||'null');
+  if (!pending || pending.paymentMethod !== 'paypal') return;
+  try {
+    const r = await api('POST','/checkout',{
+      connection: pending.connection, paymentMethod: 'paypal', seatPreference: pending.seatPreference
+    });
+    localStorage.removeItem('tc_pending_booking');
+    // URL bereinigen
+    window.history.replaceState({}, '', window.location.pathname);
+    toast('✅ Zahlung erfolgreich! Ticket wird ausgestellt…','success',5000);
+    setTimeout(()=>goAuth('tickets'),1800);
+  } catch(e) { toast('Fehler nach PayPal-Rückkehr: '+e.message,'error'); }
+})();
 
 // Nach Mollie-Rückkehr: Buchung abschliessen
 (async function checkMollieReturn(){
