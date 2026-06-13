@@ -24,7 +24,7 @@ app.use(compression());
 // CORS: nur erlaubte Origins zulassen
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['https://trainconnect.eu', 'https://www.trainconnect.eu'];
+  : ['https://trainconnect.eu', 'https://www.trainconnect.eu', 'https://ppas0.github.io'];
 
 // In der Entwicklung localhost immer erlauben
 if (process.env.NODE_ENV !== 'production') {

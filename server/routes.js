@@ -73,13 +73,29 @@ router.get('/stations/search', (req, res) => {
 router.get('/stations',        (req, res) => res.json(stations.all()));
 
 // ── SEARCH ───────────────────────────────────────────────────────────────────
+// Helper: resolve a station name or code to a station id/code.
+// If the input looks like a known station code (2-4 uppercase letters), use it
+// directly. Otherwise search by name and take the first match.
+function resolveStation(input) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  // Check if it's already a code-like string (all uppercase, 2-4 chars)
+  if (/^[A-Z]{2,4}$/.test(trimmed)) return trimmed;
+  // Search by name
+  const matches = stations.search(trimmed);
+  if (matches && matches.length > 0) return matches[0].id || matches[0].code || matches[0].name;
+  return trimmed; // fall back to original input
+}
+
 router.get('/search', authenticate, async (req, res) => {
   try {
     const { from, to, date, passengers='1', class: sc='2' } = req.query;
     if (!from||!to||!date) return res.status(400).json({ error:'from, to und date sind pflicht' });
-    if (from===to) return res.status(400).json({ error:'Start und Ziel dürfen nicht gleich sein' });
+    const fromId = resolveStation(from);
+    const toId   = resolveStation(to);
+    if (fromId===toId) return res.status(400).json({ error:'Start und Ziel dürfen nicht gleich sein' });
     const pax = Math.min(Math.max(parseInt(passengers)||1, 1), 9);
-    const results = routes.search({ fromId:from, toId:to, date, passengers:pax, seatClass:sc });
+    const results = routes.search({ fromId, toId, date, passengers:pax, seatClass:sc });
     res.json({ results, count:results.length });
   } catch(e) {
     await errors.log({ type:'search', message:e.message, query:req.query });

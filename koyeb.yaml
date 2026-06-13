@@ -1,0 +1,29 @@
+# Koyeb Deployment Config für TrainConnect Europe
+# Kostenloses Hosting in Frankfurt (EU) ohne Sleep-Timeout
+# Deploy: koyeb app create trainconnect --git github.com/ppas0/trainconnect-backend --git-branch main --ports 3000:http --routes /:3000 --env NODE_ENV=production --region fra
+name: trainconnect-backend
+git:
+  repository: github.com/ppas0/trainconnect-backend
+  branch: main
+ports:
+  - port: 3000
+    protocol: http
+routes:
+  - path: /
+    port: 3000
+region: fra
+instance_type: free
+scaling:
+  min: 1
+  max: 1
+env:
+  - name: NODE_ENV
+    value: production
+  - name: PORT
+    value: "3000"
+  # Folgende Werte im Koyeb Dashboard eintragen:
+  # STRIPE_SECRET_KEY = sk_live_...
+  # STRIPE_PUBLISHABLE_KEY = pk_live_51TfjZ94ToMc5zPAqWRanA7k4opMhbwAnQDHhORG9W2keoDNCp7ZLQiMUDw880F0lLy0eiUH5lCmqsRmcgIHqrSp500WSMsenwx
+  # DATABASE_URL = postgresql://...
+  # JWT_SECRET = (random, mindestens 64 Zeichen)
+  # ALLOWED_ORIGINS = https://ppas0.github.io,https://trainconnect-backend.onrender.com
