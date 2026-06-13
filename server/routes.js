@@ -148,25 +148,68 @@ router.get('/payment-methods', (req, res) => {
   res.json(Object.entries(PAYMENT_METHODS).map(([id, m]) => ({ id, ...m })));
 });
 
-// ── PAYMENT CONFIG (öffentlicher Stripe-Schlüssel fürs Frontend) ──────────────
+// ── PAYMENT CONFIG ────────────────────────────────────────────────────────────
 router.get('/payments/config', (req, res) => {
-  const pk = process.env.STRIPE_PUBLISHABLE_KEY || null;
-  res.json({ publishableKey: pk, configured: !!process.env.STRIPE_SECRET_KEY, live: !!(pk && pk.startsWith('pk_live_')) });
+  res.json({
+    mollie: !!process.env.MOLLIE_API_KEY,
+    paypal: !!process.env.PAYPAL_CLIENT_ID,
+    mollieMode: (process.env.MOLLIE_API_KEY || '').startsWith('live_') ? 'live' : 'test',
+    paypalClientId: process.env.PAYPAL_CLIENT_ID || null,
+  });
 });
 
-// ── PAYMENT INTENT (Stripe frontend-flow) ─────────────────────────────────────
-router.post('/payments/intent', authenticate, async (req, res) => {
+// ── MOLLIE PAYMENT (Kreditkarte, SEPA, iDEAL, Klarna etc.) ───────────────────
+router.post('/payments/mollie/create', authenticate, async (req, res) => {
   try {
-    const { amount, currency = 'EUR', method } = req.body;
+    const { amount, currency = 'EUR', method, redirectUrl, description } = req.body;
     if (!amount || amount <= 0) return res.status(400).json({ error:'Ungültiger Betrag' });
-    const intent = await createPaymentIntent({
-      amount, currency, method: method || 'card',
-      userId: req.user.id,
-      metadata: { userEmail: req.user.email }
+    const key = process.env.MOLLIE_API_KEY;
+    if (!key) return res.status(503).json({ error:'Mollie nicht konfiguriert' });
+    const { createMollieClient } = require('@mollie/api-client');
+    const mollie = createMollieClient({ apiKey: key });
+    const payment = await mollie.payments.create({
+      amount: { currency, value: parseFloat(amount).toFixed(2) },
+      description: description || 'TrainConnect Ticket',
+      redirectUrl: redirectUrl || `${process.env.FRONTEND_URL || 'https://ppas0.github.io/trainconnect-live'}/success`,
+      webhookUrl: `${process.env.RENDER_EXTERNAL_URL || 'https://trainconnect-backend.onrender.com'}/api/payments/mollie/webhook`,
+      method: method || undefined,
+      metadata: { userId: req.user.id, userEmail: req.user.email },
     });
-    res.json(intent);
+    res.json({ paymentId: payment.id, checkoutUrl: payment.getCheckoutUrl(), status: payment.status });
   } catch(e) {
-    res.status(500).json({ error: e.message || 'PaymentIntent konnte nicht erstellt werden' });
+    res.status(500).json({ error: e.message || 'Mollie-Zahlung konnte nicht erstellt werden' });
+  }
+});
+
+// ── MOLLIE WEBHOOK ────────────────────────────────────────────────────────────
+router.post('/payments/mollie/webhook', express.urlencoded({ extended: false }), async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) return res.status(400).send('no id');
+    const key = process.env.MOLLIE_API_KEY;
+    if (!key) return res.status(503).send('not configured');
+    const { createMollieClient } = require('@mollie/api-client');
+    const mollie = createMollieClient({ apiKey: key });
+    const payment = await mollie.payments.get(id);
+    console.log(`[Mollie Webhook] ${id} status=${payment.status}`);
+    res.status(200).send('ok');
+  } catch(e) {
+    console.error('[Mollie Webhook Error]', e.message);
+    res.status(200).send('ok');
+  }
+});
+
+// ── MOLLIE STATUS CHECK ───────────────────────────────────────────────────────
+router.get('/payments/mollie/status/:id', authenticate, async (req, res) => {
+  try {
+    const key = process.env.MOLLIE_API_KEY;
+    if (!key) return res.status(503).json({ error:'Mollie nicht konfiguriert' });
+    const { createMollieClient } = require('@mollie/api-client');
+    const mollie = createMollieClient({ apiKey: key });
+    const payment = await mollie.payments.get(req.params.id);
+    res.json({ id: payment.id, status: payment.status, paid: payment.isPaid() });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -178,12 +221,19 @@ router.post('/checkout', authenticate, async (req, res) => {
     if (!PAYMENT_METHODS[paymentMethod]) return res.status(400).json({ error:'Ungültige Zahlungsmethode' });
 
     let payment;
-    if (paymentIntentId) {
-      // Frontend-confirmed Stripe payment
-      const { confirmPayment } = require('./auth');
-      payment = await confirmPayment(paymentIntentId);
+    if (paymentIntentId && paymentIntentId.startsWith('tr_')) {
+      // Mollie-verifizierte Zahlung — Status bei Mollie prüfen
+      const key = process.env.MOLLIE_API_KEY;
+      if (key) {
+        const { createMollieClient } = require('@mollie/api-client');
+        const mollie = createMollieClient({ apiKey: key });
+        const mp = await mollie.payments.get(paymentIntentId);
+        if (!mp.isPaid()) return res.status(402).json({ error:`Zahlung noch nicht abgeschlossen (Status: ${mp.status})` });
+        payment = { paymentId: mp.id, method: paymentMethod, status: 'paid' };
+      } else {
+        payment = { paymentId: paymentIntentId, method: paymentMethod, status: 'paid' };
+      }
     } else {
-      // Server-side payment (fallback / non-Stripe providers)
       payment = await processPayment({
         method: paymentMethod, amount: connection.price,
         currency: 'EUR', userId: req.user.id

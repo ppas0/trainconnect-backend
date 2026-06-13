@@ -336,7 +336,7 @@ tr:hover td{background:var(--cream)}
   .pay-grid{grid-template-columns:1fr 1fr}
 }
 </style>
-<script src="https://js.stripe.com/v3/"></script>
+<!-- Mollie Checkout wird serverseitig gestartet (kein externes JS nötig) -->
 </head>
 <body>
 
@@ -379,11 +379,7 @@ tr:hover td{background:var(--cream)}
       <div class="pay-section">
         <h3>Zahlungsmethode</h3>
         <div class="pay-grid" id="payGrid"></div>
-        <div id="cardBox" style="display:none;margin-bottom:1.1rem;">
-          <div style="font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--gray);margin-bottom:.45rem;font-weight:600">Kartendaten (sicher via Stripe)</div>
-          <div id="cardElement" style="border:1.5px solid var(--gray-l);border-radius:8px;padding:.75rem .8rem;background:#fff;"></div>
-          <div id="cardError" style="color:var(--red);font-size:.8rem;margin-top:.4rem;min-height:1em;"></div>
-        </div>
+        <!-- Mollie öffnet externes Checkout-Fenster -->
       </div>
 
       <button class="confirm-btn" id="confirmBtn" onclick="confirmBook()">
@@ -697,7 +693,7 @@ tr:hover td{background:var(--cream)}
 //  STATE
 // ═══════════════════════════════════════════════════════════════════════════
 const S = {
-  stripe:null, stripePk:null, stripeLive:false, cardEl:null, cardMounted:false,
+  mollieActive:false, paypalActive:false, paypalClientId:null,
   token: localStorage.getItem('tc_token'),
   user:  JSON.parse(localStorage.getItem('tc_user')||'null'),
   results: [], selectedConn: null, selectedPay: 'card', selectedSeat: null,
@@ -797,18 +793,18 @@ const AMENITIES_BY_TYPE = {
   EuroCity:{wifi:false,dining:true,powerOutlets:false,quiet:false,airConditioning:true,bikeStorage:true,wheelchair:true,sleepingCar:false,couchette:false} };
 const PRICE_CALENDAR_VARIATION = [0.6,0.7,0.75,0.8,0.85,0.9,1.0,1.1,1.2,1.35,1.5,1.7,0.65,0.72,0.88,0.95,1.05,1.15,1.25,1.4,1.55,1.65,0.78,0.92,1.02,0.98,1.08,1.18,0.82,0.68];
 const PAYMENT_METHODS = {
-  card:{label:'Kreditkarte',icon:'💳',provider:'stripe',enabled:true},
+  card:{label:'Kreditkarte',icon:'💳',provider:'mollie',enabled:true},
   paypal:{label:'PayPal',icon:'🅿️',provider:'paypal',enabled:true},
-  apple_pay:{label:'Apple Pay',icon:'🍎',provider:'stripe',enabled:true},
-  google_pay:{label:'Google Pay',icon:'🟢',provider:'stripe',enabled:true},
+  apple_pay:{label:'Apple Pay',icon:'🍎',provider:'mollie',enabled:true},
+  google_pay:{label:'Google Pay',icon:'🟢',provider:'mollie',enabled:true},
   twint:{label:'TWINT',icon:'🇨🇭',provider:'twint',enabled:true},
-  sepa:{label:'SEPA Banküberweisung',icon:'🏦',provider:'stripe',enabled:true},
+  sepa:{label:'SEPA Banküberweisung',icon:'🏦',provider:'mollie',enabled:true},
   crypto_btc:{label:'Bitcoin (BTC)',icon:'₿',provider:'coinbase',enabled:true},
   crypto_eth:{label:'Ethereum (ETH)',icon:'⟠',provider:'coinbase',enabled:true},
   crypto_usdt:{label:'USDT (Tether)',icon:'💵',provider:'coinbase',enabled:true},
   klarna:{label:'Klarna',icon:'🛍️',provider:'klarna',enabled:true},
   sofort:{label:'Sofort',icon:'⚡',provider:'klarna',enabled:true},
-  stripe:{label:'Stripe',icon:'💠',provider:'stripe',enabled:true} };
+  ideal:{label:'iDEAL',icon:'🇳🇱',provider:'mollie',enabled:true} };
 const POPULAR_ROUTES = [
   { from:'ZRH', to:'BER', fromName:'Zürich HB', toName:'Berlin Hbf', price:49, duration:'7h 30min' },
   { from:'VIE', to:'MUC', fromName:'Wien Hbf', toName:'München Hbf', price:29, duration:'4h 00min' },
@@ -1049,7 +1045,7 @@ function setUser(d) {
   localStorage.setItem('tc_token',d.token);
   localStorage.setItem('tc_user',JSON.stringify(d.user));
   updateNav();
-initStripe();
+initPayment();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1263,28 +1259,16 @@ function pickSeat(btn, sn) {
   btn.classList.add('sel'); S.selectedSeat = sn;
 }
 
-// ── STRIPE.JS (echte Kartenzahlung) ─────────────────────────────────────────
-const STRIPE_CARD_METHODS = ['card','stripe','apple_pay','google_pay'];
-async function initStripe(){
+// ── MOLLIE PAYMENT (Kreditkarte, SEPA, iDEAL, Klarna, Apple/Google Pay) ────
+const MOLLIE_METHODS = ['card','apple_pay','google_pay','sepa','ideal','klarna'];
+
+async function initPayment(){
   try{
     const cfg = await api('GET','/payments/config');
-    if(cfg.publishableKey && window.Stripe){
-      S.stripePk=cfg.publishableKey; S.stripeLive=!!cfg.live;
-      S.stripe=Stripe(cfg.publishableKey);
-    }
-  }catch(e){ /* Stripe nicht konfiguriert → Fallback bleibt aktiv */ }
-}
-function updateCardBox(){
-  const box=document.getElementById('cardBox'); if(!box) return;
-  const zeigen = !!S.stripe && STRIPE_CARD_METHODS.includes(S.selectedPay);
-  box.style.display = zeigen ? 'block' : 'none';
-  if(zeigen && !S.cardMounted){
-    const elements=S.stripe.elements();
-    S.cardEl=elements.create('card',{hidePostalCode:true});
-    S.cardEl.mount('#cardElement');
-    S.cardEl.on('change',ev=>{ document.getElementById('cardError').textContent = ev.error ? ev.error.message : ''; });
-    S.cardMounted=true;
-  }
+    S.mollieActive = !!cfg.mollie;
+    S.paypalActive = !!cfg.paypal;
+    S.paypalClientId = cfg.paypalClientId;
+  }catch(e){}
 }
 
 async function confirmBook() {
@@ -1292,20 +1276,33 @@ async function confirmBook() {
   const btn = document.getElementById('confirmBtn');
   btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Zahlung wird verarbeitet…';
   try {
-    let paymentIntentId = null;
-    if (S.stripe && STRIPE_CARD_METHODS.includes(S.selectedPay)) {
-      // 1) PaymentIntent vom Server
-      const intent = await api('POST','/payments/intent',{ amount:S.selectedConn.price, currency:'EUR', method:S.selectedPay });
-      if (!intent.simulated) {
-        // 2) Karte sicher über Stripe bestätigen (Daten gehen NUR an Stripe, nie an unseren Server)
-        const ergebnis = await S.stripe.confirmCardPayment(intent.clientSecret, { payment_method:{ card:S.cardEl } });
-        if (ergebnis.error) throw new Error(ergebnis.error.message);
-        if (ergebnis.paymentIntent.status!=='succeeded') throw new Error('Zahlung nicht abgeschlossen ('+ergebnis.paymentIntent.status+')');
-        paymentIntentId = ergebnis.paymentIntent.id;
+    const payMethod = S.selectedPay;
+
+    if (S.mollieActive && MOLLIE_METHODS.includes(payMethod)) {
+      // Mollie: Server erstellt Payment, leitet zum Checkout weiter
+      const mollieMethod = payMethod === 'card' ? 'creditcard' : payMethod === 'ideal' ? 'ideal' : payMethod === 'sepa' ? 'directdebit' : payMethod === 'klarna' ? 'klarnapaylater' : null;
+      const result = await api('POST','/payments/mollie/create',{
+        amount: S.selectedConn.price,
+        currency: 'EUR',
+        method: mollieMethod || undefined,
+        description: `TrainConnect: ${S.selectedConn.fromStation} → ${S.selectedConn.toStation}`,
+        redirectUrl: window.location.href + '?booking_return=1'
+      });
+      if (result.checkoutUrl) {
+        // Speichere Buchungsdaten für nach der Rückkehr
+        localStorage.setItem('tc_pending_booking', JSON.stringify({
+          connection: S.selectedConn, paymentMethod: payMethod,
+          seatPreference: S.selectedSeat, mollieId: result.paymentId
+        }));
+        window.location.href = result.checkoutUrl;
+        return;
       }
+      throw new Error('Mollie Checkout-URL fehlt');
     }
+
+    // Fallback: Alle anderen Methoden (PayPal, TWINT, Sofort etc.) → direkte Buchung
     const r = await api('POST','/checkout',{
-      connection: S.selectedConn, paymentMethod: S.selectedPay, seatPreference: S.selectedSeat, paymentIntentId
+      connection: S.selectedConn, paymentMethod: payMethod, seatPreference: S.selectedSeat
     });
     closeModal();
     toast('✅ '+r.message,'success',5000);
@@ -1314,6 +1311,24 @@ async function confirmBook() {
   } catch(e) { toast('Buchungsfehler: '+e.message,'error'); }
   finally { btn.disabled=false; btn.textContent='Jetzt kostenpflichtig buchen'; }
 }
+
+// Nach Mollie-Rückkehr: Buchung abschliessen
+(async function checkMollieReturn(){
+  if (!window.location.search.includes('booking_return=1')) return;
+  const pending = JSON.parse(localStorage.getItem('tc_pending_booking')||'null');
+  if (!pending) return;
+  try {
+    const status = await api('GET','/payments/mollie/status/'+pending.mollieId);
+    if (!status.paid) { toast('Zahlung nicht abgeschlossen ('+status.status+')','error'); return; }
+    const r = await api('POST','/checkout',{
+      connection: pending.connection, paymentMethod: pending.paymentMethod,
+      seatPreference: pending.seatPreference, paymentIntentId: pending.mollieId
+    });
+    localStorage.removeItem('tc_pending_booking');
+    toast('✅ '+r.message,'success',5000);
+    goAuth('tickets');
+  } catch(e) { toast('Rückkehr-Fehler: '+e.message,'error'); }
+})();
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TICKETS

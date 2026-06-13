@@ -13,6 +13,7 @@
   },
   "license": "ISC",
   "dependencies": {
+    "@mollie/api-client": "^4.5.0",
     "@sendgrid/mail": "^8.1.6",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
