@@ -75,6 +75,17 @@ app.listen(PORT, () => {
   console.log(`\n🚆 TrainConnect Europe v2.0`);
   console.log(`   → http://localhost:${PORT}`);
   console.log(`   → API: http://localhost:${PORT}/api/health\n`);
+
+  // Self-ping alle 14 Minuten — verhindert Render-Free-Tier-Sleep
+  if (process.env.NODE_ENV === 'production') {
+    const https = require('https');
+    setInterval(() => {
+      const host = process.env.RENDER_EXTERNAL_URL || 'https://trainconnect-backend.onrender.com';
+      https.get(`${host}/api/health`, (r) => {
+        console.log(`[keep-alive] ping ${r.statusCode}`);
+      }).on('error', () => {});
+    }, 14 * 60 * 1000);
+  }
 });
 
 module.exports = app;
